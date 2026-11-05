@@ -17,6 +17,7 @@
 4. **核心层禁止平台专属代码**：不得 import Electron、DSH SDK 或浏览器专属 API；需要平台能力时，通过 `FileAccess`、`HostBridge` 接口由壳提供。
 5. **原始数据不可变、归纳可重跑**：每条记忆记录来源文件、模型和 prompt 版本。
 6. **暂不处理多进程同时写**：当前假设同一时间只有一个写入者，以后需要时再在 `core/store` 加文件锁。
+7. **代码与数据分离**：代码库只放程序；记忆数据（原始聊天、记忆树、缓存、配置、API key）一律放在用户本地数据目录，绝不提交到代码库。代码里不得写死数据路径，统一通过 `core` 的 `resolveHome()` 获取。
 
 ## 3. 架构图
 
@@ -31,7 +32,7 @@
    └──────────────┬───────────────┘                               │
                   ▼                                               ▼
    ┌───────────────────────────────────────────────────────────────────────────────┐
-   │ 数据目录（不进 Git）~/.memory-system/                                            │
+   │ 用户数据目录（不在代码库中）~/.morphling/                                        │
    │   raw/  原始聊天文件（不可变）   memory/  Markdown 记忆树   .cache/  可重建缓存   │
    └───────────────────────────────────────▲───────────────────────────────────────┘
                                            │ 通过 FileAccess 读写
@@ -51,7 +52,7 @@
 
 | 类别 | 层 / 包 | 职责 | 技术栈 | 推荐库 |
 |---|---|---|---|---|
-| 数据 | `~/.memory-system/` | 原始文件 + Markdown 记忆树 + 可重建缓存 | 文件系统 | — |
+| 数据 | `~/.morphling/`（用户本地，不在代码库中） | 原始文件 + Markdown 记忆树 + 可重建缓存 | 文件系统 | — |
 | **核心** | `packages/core` | 数据结构、导入器、原始存档、记忆树读写、`_index.md` 维护、归纳流水线、关键词检索；不直接调用 `fs`，通过 `FileAccess` 接口读写 | TypeScript | `zod`、`gray-matter`（frontmatter）、Vercel `ai` SDK（大模型统一接口） |
 | **核心** | `packages/cli` | `memory ingest`（导入+归纳）、`memory search`（检索）；用 Node `fs` 实现 `FileAccess` | Node 24 | `commander`、Node `zlib`（zstd 解压）、ripgrep |
 | **核心** | `packages/dashboard` | 全部界面页面与组件（组件库形式，可被挂载） | React 19 + Vite 库模式 | `@tanstack/react-query`、`@tanstack/react-virtual`、`recharts`、Radix UI；样式用 CSS Modules + CSS 变量 |
@@ -92,8 +93,18 @@ interface HostBridge {
 
 ## 6. 数据目录与记忆格式
 
+**位置**：数据目录在用户本地，与代码库完全分开。按以下优先级确定：
+
+| 优先级 | 来源 | 示例 |
+|---|---|---|
+| 1 | 命令行参数 | `morph ingest --home /path/to/dir` |
+| 2 | 环境变量 `MORPHLING_HOME` | `export MORPHLING_HOME=~/Documents/Morphling` |
+| 3 | 默认值 | `~/.morphling/` |
+
+用户可以把它指向 Obsidian 库、iCloud 或自己的私有 Git 仓库来备份和同步，这些都与 Morphling 代码库无关。配置文件 `config.toml`（模型选择、API key 引用等）也放在数据目录里。
+
 ```
-~/.memory-system/
+~/.morphling/                          # 默认位置，可通过 MORPHLING_HOME 修改
 ├── raw/                               # 原始聊天文件，按内容哈希命名，只增不改
 │   ├── dsh/2026/11/<hash>.jsonl.zstd
 │   ├── codex/<hash>.jsonl
@@ -170,7 +181,7 @@ Morphling/
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
-├── .gitignore                    # node_modules、dist、数据目录、凭据
+├── .gitignore                    # node_modules、dist、凭据（数据本来就不在仓库里）
 ├── docs/
 │   └── architecture.md           # 本文
 ├── packages/                     # ═══ 核心 ═══
